@@ -8,15 +8,21 @@ https://qiita.com/coppercele/items/e4d71537a386966338d0
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <esp_now.h>
+
 #include <SparkFun_TB6612.h>
 #include <MadgwickAHRS.h>
 #include <BMI160Gen.h>
 
+
 #define SERIAL
 
 #define BMI160_ADDRESS 0x69
-#define PWM_MIN 20 // 最小PWM値
+#define PWM_MIN 90 // 最小PWM値
 #define PWM_MAX 255 // 最大PWM値
+
+String mymacAddress = "B8:F8:62:F9:C4:D4";
 
 Madgwick filter;
 
@@ -25,8 +31,8 @@ float prevRoll = 0;
 
 // PID制御用パラメータ
 float Kp = 10.0;
-float Ki = 1.0;
-float Kd = 0.8;
+float Ki = 0.0;
+float Kd = 0.0;
 
 float targetAngle = 0.0; // 目標角度（直立）
 float dt, preTime;
@@ -55,6 +61,12 @@ int16_t speed = 0;
 Motor motorA(AIN1, AIN2, PWMA, offsetA, STBY); // AIN1, AIN2, PWMA
 Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 
+typedef struct {
+  int speed;
+} cData;
+
+cData setData;
+
 const float vref = 3.49;
 
 uint64_t lasttime;
@@ -67,6 +79,17 @@ void motorControl(){
         forward(motorA, motorB, speed);
     }
     Serial.printf("Speed: %d\n", speed);
+}
+
+// 受信コールバック関数
+void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+  if (data_len != sizeof(cData)) {
+    Serial.println("Received data size mismatch");
+    return;
+  }
+  memcpy(&setData, data, data_len);
+  speed = constrain(setData.speed, -255, 255);
+  motorControl();
 }
 
 void setup() {
@@ -82,42 +105,52 @@ void setup() {
 
     filter.begin(100);
 
+    WiFi.mode(WIFI_STA);
+
+    if(esp_now_init() != ESP_OK){
+      Serial.println("Failed to initialize ESP-NOW");
+      return;
+    }
+
+    esp_now_register_recv_cb(OnDataRecv);
+
     lasttime = millis();
 
     Serial.println("Setup done!");
 }
 
 void loop() {
-  uint64_t now = millis();
-  if (now - lasttime < 10) return; // 10ms周期
-  lasttime = now;
+  
+  // uint64_t now = millis();
+  // if (now - lasttime < 10) return; // 10ms周期
+  // lasttime = now;
 
-  // 6軸センサ読み出し
-  int ax, ay, az, gx, gy, gz;
-  BMI160.readMotionSensor(ax, ay, az, gx, gy, gz);
+  // // 6軸センサ読み出し
+  // int ax, ay, az, gx, gy, gz;
+  // BMI160.readMotionSensor(ax, ay, az, gx, gy, gz);
 
-  // 加速度値を分解能で割って加速度[G]に変換する
-  float acc_x = ax / 16384.0; // LSB = 2G / 2^15 = 1/16384 G
-  float acc_y = ay / 16384.0;
-  float acc_z = az / 16384.0;
+  // // 加速度値を分解能で割って加速度[G]に変換する
+  // float acc_x = ax / 16384.0; // LSB = 2G / 2^15 = 1/16384 G
+  // float acc_y = ay / 16384.0;
+  // float acc_z = az / 16384.0;
 
-  // 角速度値を分解能で割って角速度[deg/sec]に変換する
-  float gyro_x = gx / 16.384; // LSB = 2000deg/sec / 2^15 = 1/16.384 deg/sec
-  float gyro_y = gy / 16.384;
-  float gyro_z = gz / 16.384;
+  // // 角速度値を分解能で割って角速度[deg/sec]に変換する
+  // float gyro_x = gx / 16.384; // LSB = 2000deg/sec / 2^15 = 1/16.384 deg/sec
+  // float gyro_y = gy / 16.384;
+  // float gyro_z = gz / 16.384;
 
-  // Madgwickフィルタの計算
-  filter.updateIMU(gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z);
+  // // Madgwickフィルタの計算
+  // filter.updateIMU(gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z);
 
-  roll = filter.getRoll(); // ロール角を取得
+  // roll = filter.getRoll(); // ロール角を取得
 
-  #ifdef SERIAL
-    count++;
-    if(count >= 20){
-      Serial.printf("Roll: %f\n", roll);
-      count = 0;
-    }
-  #endif
+  // #ifdef SERIAL
+  //   count++;
+  //   if(count >= 20){
+  //     Serial.printf("Roll: %f\n", roll);
+  //     count = 0;
+  //   }
+  // #endif
 
   // dt = (micros() - preTime) * 0.000001;  // 処理時間を求める
   // preTime = micros(); // 現在時間を保存

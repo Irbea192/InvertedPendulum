@@ -1,0 +1,151 @@
+#include <M5Unified.h>
+#include <esp_now.h>
+
+#include <WiFi.h>
+
+String mymacAddress = "08:F9:E0:D2:55:B8";
+
+typedef struct {
+  String deviceStatus = "";
+  String functionStatus = "";
+  String sendStatus = "";
+} LcdData;
+
+
+LcdData lcdData;
+
+typedef struct {
+  float Kp = 10.0;
+  float Ki = 0.0;
+  float Kd = 0.0;
+} cData;
+
+cData dataToSend;
+cData oldData;
+
+uint8_t targetAddress[] = {0xB8, 0xF8, 0x62, 0xF9, 0xC4, 0xD4};
+esp_now_peer_info_t peerInfo;
+
+int mode = 0;
+String modeNames[] = {"Kp", "Ki", "Kd", "Send"};
+
+void printfLcd() {
+  M5.Lcd.clear();
+  M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.setTextSize(2);
+  M5.Lcd.setCursor(10, 10);
+  M5.Lcd.printf(lcdData.deviceStatus.c_str());
+  M5.Lcd.setCursor(10, 40);
+  M5.Lcd.printf("Function Status: %s", lcdData.functionStatus.c_str());
+  M5.Lcd.setCursor(10, 70);
+  M5.Lcd.printf("Send Status: %s", lcdData.sendStatus.c_str());
+  M5.Lcd.setCursor(10, 100);
+  M5.Lcd.printf("Kp:%.2f Ki:%.2f Kd:%.2f", oldData.Kp, oldData.Ki, oldData.Kd);
+  M5.Lcd.setCursor(10, 130);
+  M5.Lcd.printf("Kp:%.2f Ki:%.2f Kd:%.2f", dataToSend.Kp, dataToSend.Ki, dataToSend.Kd);
+  M5.Lcd.setCursor(10, 160);
+  M5.Lcd.printf("Mode: %s", modeNames[mode].c_str());
+
+}
+
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("送信ステータス: ");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "成功" : "失敗");
+  lcdData.sendStatus = (status == ESP_NOW_SEND_SUCCESS) ? "Success" : "Fail";
+  memcpy(&oldData, &dataToSend, sizeof(cData));
+}
+
+void sendData() {
+  esp_err_t result = esp_now_send(targetAddress, (uint8_t *)&dataToSend, sizeof(dataToSend));
+  if (result == ESP_OK) {
+    Serial.println("データ送信成功");
+    lcdData.functionStatus = "Success";
+  } else {
+    Serial.println("データ送信失敗");
+    lcdData.functionStatus = "Fail";
+  }
+}
+
+void setup() {
+  auto cfg = M5.config();
+  cfg.clear_display = true;
+  M5.begin(cfg);
+
+  Serial.begin(115200);
+
+
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Failed to initialize ESP-NOW");
+    lcdData.deviceStatus = "Failed to initialize ESP-NOW";
+    printfLcd();
+    return;
+  }
+
+  memcpy(peerInfo.peer_addr, targetAddress, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add peer");
+    lcdData.deviceStatus = "Failed to add peer";
+    printfLcd();
+    return;
+  }
+
+  esp_now_register_send_cb(OnDataSent);
+
+  Serial.println("Setup done!");
+  lcdData.deviceStatus = "Setup done!";
+  printfLcd();
+}
+
+void loop() {
+  M5.update();
+  if (M5.BtnA.wasPressed()) {
+    switch (mode){
+      case 0:
+        dataToSend.Kp -= 1;
+        break;
+
+      case 1:
+        dataToSend.Ki -= 0.1;
+        break;
+
+      case 2:
+        dataToSend.Kd -= 0.1;
+        break;
+
+      default:
+        break;
+    }
+    printfLcd();
+  }
+  if (M5.BtnB.wasPressed()) {
+    mode = (mode + 1) % 4;
+    if (mode == 3){
+      sendData();
+    }
+    printfLcd();
+  }
+  if (M5.BtnC.wasPressed()) {
+    switch (mode){
+      case 0:
+        dataToSend.Kp += 1;
+        break;
+
+      case 1:
+        dataToSend.Ki += 0.1;
+        break;
+
+      case 2:
+        dataToSend.Kd += 0.1;
+        break;
+
+      default:
+        break;
+    }
+    printfLcd();
+  }
+}
