@@ -9,14 +9,15 @@ https://qiita.com/coppercele/items/e4d71537a386966338d0
 #include <Arduino.h>
 #include <Wire.h>
 #include <SparkFun_TB6612.h>
-#include <DFRobot_BMI160.h>
 #include <MadgwickAHRS.h>
+#include <BMI160Gen.h>
+
+#define SERIAL
 
 #define BMI160_ADDRESS 0x69
 #define PWM_MIN 20 // 最小PWM値
 #define PWM_MAX 255 // 最大PWM値
 
-DFRobot_BMI160 bmi160;
 Madgwick filter;
 
 float roll = 0;
@@ -56,6 +57,9 @@ Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 
 const float vref = 3.49;
 
+uint64_t lasttime;
+int count = 0;
+
 void motorControl(){
     if(speed == 0) {
         brake(motorA, motorB);
@@ -71,62 +75,64 @@ void setup() {
 
     Serial.printf("Setup start !\n");
 
-    //init the hardware bmin160  
-    if (bmi160.softReset() != BMI160_OK){
-      Serial.println("reset false");
-      while(1);
-    }
-    
-    //set and init the bmi160 i2c address
-    if (bmi160.I2cInit(BMI160_ADDRESS) != BMI160_OK){
-      Serial.println("init false");
-      while(1);
-    }
+    BMI160.setupI2C(MY_SDA, MY_SCL);
+    BMI160.begin(BMI160GenClass::I2C_MODE, BMI160_ADDRESS);
+    BMI160.setFullScaleGyroRange(BMI160_GYRO_RANGE_2000);// ジャイロのレンジ設定
+    BMI160.setFullScaleAccelRange(BMI160_ACCEL_RANGE_2G);// 加速度のレンジ設定 
 
     filter.begin(100);
+
+    lasttime = millis();
 
     Serial.println("Setup done!");
 }
 
 void loop() {
-  // センサーデータ取得
-  int i, rslt;
-  int16_t rawData[6]={0};
-  float data[6]={0};
+  uint64_t now = millis();
+  if (now - lasttime < 10) return; // 10ms周期
+  lasttime = now;
 
-  rslt = bmi160.getAccelGyroData(rawData);
-  if(rslt == 0){
-    for(i=0;i<6;i++){
-      if (i<3){
-        // 最初の三つのデータはジャイロデータ
-        data[i] = rawData[i]*3.14/180.0; // deg
-        // Serial.print(rawData[i]*3.14/180.0);
-      }else{
-        // 後ろの三つのデータは加速度データ
-        data[i] = rawData[i]/16384.0; // g
-        // Serial.print(rawData[i]/16384.0);Serial.print("\t");
-      }
-    }
-    filter.updateIMU(data[0], data[1], data[2], data[3], data[4], data[5]); // ジャイロと加速度から角度を計算
-  }else{
-    Serial.println("err");
-  }
+  // 6軸センサ読み出し
+  int ax, ay, az, gx, gy, gz;
+  BMI160.readMotionSensor(ax, ay, az, gx, gy, gz);
+
+  // 加速度値を分解能で割って加速度[G]に変換する
+  float acc_x = ax / 16384.0; // LSB = 2G / 2^15 = 1/16384 G
+  float acc_y = ay / 16384.0;
+  float acc_z = az / 16384.0;
+
+  // 角速度値を分解能で割って角速度[deg/sec]に変換する
+  float gyro_x = gx / 16.384; // LSB = 2000deg/sec / 2^15 = 1/16.384 deg/sec
+  float gyro_y = gy / 16.384;
+  float gyro_z = gz / 16.384;
+
+  // Madgwickフィルタの計算
+  filter.updateIMU(gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z);
+
   roll = filter.getRoll(); // ロール角を取得
 
-  dt = (micros() - preTime) * 0.000001;  // 処理時間を求める
-  preTime = micros(); // 現在時間を保存
+  #ifdef SERIAL
+    count++;
+    if(count >= 20){
+      Serial.printf("Roll: %f\n", roll);
+      count = 0;
+    }
+  #endif
 
-  // PID制御
-  P = roll - targetAngle; // 現在の角度と目標角度から偏差を求める
-  I += P * dt; // 偏差の積分
-  D = (P - preP) / dt; // 偏差の微分
+  // dt = (micros() - preTime) * 0.000001;  // 処理時間を求める
+  // preTime = micros(); // 現在時間を保存
 
-  // アンチワインドアップ
-  // I制御に値が溜まって、積分の飽和が発生し応答が悪くなるので、大きくなりすぎたらリセットする
-  if (100 < abs(I * Ki)) I = 0;
+  // // PID制御
+  // P = roll - targetAngle; // 現在の角度と目標角度から偏差を求める
+  // I += P * dt; // 偏差の積分
+  // D = (P - preP) / dt; // 偏差の微分
 
-  power = Kp * P + Ki * I + Kd * D; // 制御量を計算
-  pwm = (int)(constrain(abs(power), PWM_MIN, PWM_MAX)); // PWM値に変換
+  // // アンチワインドアップ
+  // // I制御に値が溜まって、積分の飽和が発生し応答が悪くなるので、大きくなりすぎたらリセットする
+  // if (100 < abs(I * Ki)) I = 0;
 
-  if (roll > stoptheta)
+  // power = Kp * P + Ki * I + Kd * D; // 制御量を計算
+  // pwm = (int)(constrain(abs(power), PWM_MIN, PWM_MAX)); // PWM値に変換
+
+  // if (roll > stoptheta)
 }
