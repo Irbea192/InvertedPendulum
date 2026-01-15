@@ -8,18 +8,22 @@ https://qiita.com/coppercele/items/e4d71537a386966338d0
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <WiFi.h>
-#include <esp_now.h>
 
 #include <SparkFun_TB6612.h>
 #include <MadgwickAHRS.h>
 #include <BMI160Gen.h>
 
 
-#define SERIAL
+#define SERIAL 0
+#define ESPNOW 1
+
+#if ESPNOW
+  #include <esp_now.h>
+  #include <WiFi.h>
+#endif
 
 #define BMI160_ADDRESS 0x69
-#define PWM_MIN 90 // 最小PWM値
+#define PWM_MIN 45 // 最小PWM値
 #define PWM_MAX 255 // 最大PWM値
 
 String mymacAddress = "B8:F8:62:F9:C4:D4";
@@ -29,21 +33,16 @@ Madgwick filter;
 float roll = 0;
 float prevRoll = 0;
 
-// PID制御用パラメータ
-float Kp = 10.0;
-float Ki = 0.0;
-float Kd = 0.0;
-
-float targetAngle = 0.0; // 目標角度（直立）
+float targetAngle = -2.5; // 目標角度（直立）
 float dt, preTime;
 float P, I, D, U, preP;
 float power = 0.0;
 int pwm;
 
-int stoptheta = 30; //倒立許容角度
+int stoptheta = 40; //倒立許容角度
 
-const int offsetA = -1;
-const int offsetB = 1;
+const int offsetA = 1;
+const int offsetB = -1;
 
 const uint8_t BattVoltPin = A0;
 const uint8_t PWMA = D1;
@@ -62,35 +61,30 @@ Motor motorA(AIN1, AIN2, PWMA, offsetA, STBY); // AIN1, AIN2, PWMA
 Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 
 typedef struct {
-  int speed;
+  float Kp = 18.0;
+  float Ki = 450.0;
+  float Kd = 0.1;
 } cData;
 
-cData setData;
+cData recvData;
+cData setData; // PID制御用パラメータ
 
 const float vref = 3.49;
 
 uint64_t lasttime;
 int count = 0;
 
-void motorControl(){
-    if(speed == 0) {
-        brake(motorA, motorB);
-    }else{
-        forward(motorA, motorB, speed);
-    }
-    Serial.printf("Speed: %d\n", speed);
-}
 
-// 受信コールバック関数
-void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
-  if (data_len != sizeof(cData)) {
-    Serial.println("Received data size mismatch");
-    return;
+#if ESPNOW
+  // 受信コールバック関数
+  void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+    if (data_len != sizeof(cData)) {
+      Serial.println("Received data size mismatch");
+      return;
+    }
+    memcpy(&recvData, data, data_len);
   }
-  memcpy(&setData, data, data_len);
-  speed = constrain(setData.speed, -255, 255);
-  motorControl();
-}
+#endif
 
 void setup() {
     Serial.begin(115200);
@@ -105,14 +99,17 @@ void setup() {
 
     filter.begin(100);
 
-    WiFi.mode(WIFI_STA);
+    #if ESPNOW
 
-    if(esp_now_init() != ESP_OK){
-      Serial.println("Failed to initialize ESP-NOW");
-      return;
-    }
+      WiFi.mode(WIFI_STA);
 
-    esp_now_register_recv_cb(OnDataRecv);
+      if(esp_now_init() != ESP_OK){
+        Serial.println("Failed to initialize ESP-NOW");
+        return;
+      }
+
+      esp_now_register_recv_cb(OnDataRecv);
+    #endif
 
     lasttime = millis();
 
@@ -120,52 +117,71 @@ void setup() {
 }
 
 void loop() {
+  // 10msec周期で処理
+  unsigned long now = micros();
+  if((now - lasttime) < 10000) return;
+  lasttime = now;
+
+  // 6軸センサ読み出し
+  int ax, ay, az, gx, gy, gz;
+  BMI160.readMotionSensor(ax, ay, az, gx, gy, gz);
   
-  // uint64_t now = millis();
-  // if (now - lasttime < 10) return; // 10ms周期
-  // lasttime = now;
+  float acc_x = ax / 16384.0;
+  float acc_y = ay / 16384.0;
+  float acc_z = az / 16384.0;
 
-  // // 6軸センサ読み出し
-  // int ax, ay, az, gx, gy, gz;
-  // BMI160.readMotionSensor(ax, ay, az, gx, gy, gz);
+  float gyro_x = gx / 16.384;
+  float gyro_y = gy / 16.384;
+  float gyro_z = gz / 16.384;
 
-  // // 加速度値を分解能で割って加速度[G]に変換する
-  // float acc_x = ax / 16384.0; // LSB = 2G / 2^15 = 1/16384 G
-  // float acc_y = ay / 16384.0;
-  // float acc_z = az / 16384.0;
+  // Madgwickフィルタの計算
+  filter.updateIMU(gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z);
 
-  // // 角速度値を分解能で割って角速度[deg/sec]に変換する
-  // float gyro_x = gx / 16.384; // LSB = 2000deg/sec / 2^15 = 1/16.384 deg/sec
-  // float gyro_y = gy / 16.384;
-  // float gyro_z = gz / 16.384;
+  roll = filter.getRoll(); // ロール角を取得
 
-  // // Madgwickフィルタの計算
-  // filter.updateIMU(gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z);
+  #if SERIAL
+    count++;
+    if(count >= 20){
+      Serial.printf("Roll: %f\n", roll);
+      count = 0;
+    }
+  #endif
 
-  // roll = filter.getRoll(); // ロール角を取得
+  dt = (micros() - preTime) * 0.000001;  // 処理時間を求める
+  preTime = micros(); // 現在時間を保存
 
-  // #ifdef SERIAL
-  //   count++;
-  //   if(count >= 20){
-  //     Serial.printf("Roll: %f\n", roll);
-  //     count = 0;
-  //   }
-  // #endif
+  // PID制御
+  P = roll - targetAngle; // 現在の角度と目標角度から偏差を求める
+  I += P * dt; // 偏差の積分
+  D = (P - preP) / dt; // 偏差の微分
 
-  // dt = (micros() - preTime) * 0.000001;  // 処理時間を求める
-  // preTime = micros(); // 現在時間を保存
+  // アンチワインドアップ
+  // I制御に値が溜まって、積分の飽和が発生し応答が悪くなるので、大きくなりすぎたらリセットする
+  if (100 < abs(I * setData.Ki)) I = 0;
 
-  // // PID制御
-  // P = roll - targetAngle; // 現在の角度と目標角度から偏差を求める
-  // I += P * dt; // 偏差の積分
-  // D = (P - preP) / dt; // 偏差の微分
+  power = setData.Kp * P + setData.Ki * I + setData.Kd * D; // 制御量を計算
+  pwm = (int)(constrain(abs(power), PWM_MIN, PWM_MAX)); // PWM値に変換
 
-  // // アンチワインドアップ
-  // // I制御に値が溜まって、積分の飽和が発生し応答が悪くなるので、大きくなりすぎたらリセットする
-  // if (100 < abs(I * Ki)) I = 0;
+  if (targetAngle - 1 < roll && roll < targetAngle + 1) {
+    brake(motorA, motorB);
+    P = 0;
 
-  // power = Kp * P + Ki * I + Kd * D; // 制御量を計算
-  // pwm = (int)(constrain(abs(power), PWM_MIN, PWM_MAX)); // PWM値に変換
+    D = 0;
+  } else if (roll < -stoptheta + targetAngle || roll > stoptheta + targetAngle) {
+    brake(motorA, motorB);
+    P = 0;
+    I = 0;
+    D = 0;
 
-  // if (roll > stoptheta)
+    #if ESPNOW
+      memcpy(&setData, &recvData, sizeof(cData));
+    #endif
+
+  } else {
+    if (power < 0) {
+      forward(motorA, motorB, pwm);
+    } else if (power > 0) {
+      back(motorA, motorB, pwm);
+    }
+  }
 }

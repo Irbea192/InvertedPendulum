@@ -15,7 +15,7 @@ typedef struct {
 LcdData lcdData;
 
 typedef struct {
-  float Kp = 10.0;
+  float Kp = 40.0;
   float Ki = 0.0;
   float Kd = 0.0;
 } cData;
@@ -23,30 +23,63 @@ typedef struct {
 cData dataToSend;
 cData oldData;
 
+float increaseKp = 1.0;
+float increaseKi = 5.0;
+float increaseKd = 0.1;
+
 uint8_t targetAddress[] = {0xB8, 0xF8, 0x62, 0xF9, 0xC4, 0xD4};
 esp_now_peer_info_t peerInfo;
 
 int mode = 0;
-String modeNames[] = {"Kp", "Ki", "Kd", "Send"};
+String modeNames[4] = {"Kp", "Ki", "Kd", "Send"};
+String aBtn[4] = {"-Kp", "-Ki", "-Kd", ""};
+String cBtn[4] = {"+Kp", "+Ki", "+Kd", "Send"};
 
-void printfLcd() {
+int btnHeight = 220; // ボタン表示のY座標
+int btnAPos = 60; // ボタンAの中心位置
+int btnBPos = 155; // ボタンBの中心位置
+int btnCPos= 285; // ボタンCの中心位置
+
+void setupLcd() {
   M5.Lcd.clear();
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextColor(WHITE);
   M5.Lcd.setTextSize(2);
+}
+
+void errLcd() {
+  M5.Lcd.clear();
   M5.Lcd.setCursor(10, 10);
   M5.Lcd.printf(lcdData.deviceStatus.c_str());
-  M5.Lcd.setCursor(10, 40);
-  M5.Lcd.printf("Function Status: %s", lcdData.functionStatus.c_str());
-  M5.Lcd.setCursor(10, 70);
-  M5.Lcd.printf("Send Status: %s", lcdData.sendStatus.c_str());
-  M5.Lcd.setCursor(10, 100);
-  M5.Lcd.printf("Kp:%.2f Ki:%.2f Kd:%.2f", oldData.Kp, oldData.Ki, oldData.Kd);
-  M5.Lcd.setCursor(10, 130);
-  M5.Lcd.printf("Kp:%.2f Ki:%.2f Kd:%.2f", dataToSend.Kp, dataToSend.Ki, dataToSend.Kd);
-  M5.Lcd.setCursor(10, 160);
-  M5.Lcd.printf("Mode: %s", modeNames[mode].c_str());
+}
 
+void printfLcd() {
+  M5.Lcd.clear();
+  M5.Lcd.setCursor(10, 10);
+  M5.Lcd.printf("Function Status: %s", lcdData.functionStatus.c_str());
+  M5.Lcd.setCursor(10, 30);
+  M5.Lcd.printf("Send Status: %s", lcdData.sendStatus.c_str());
+  M5.Lcd.setCursor(10, 50);
+  M5.Lcd.printf("Mode: %s", modeNames[mode].c_str());
+  
+  M5.Lcd.setCursor(30, 70);
+  M5.Lcd.printf(" Kp      Ki      Kd");
+  M5.Lcd.setCursor(30, 90);
+  M5.Lcd.printf("%.2f    %.2f    %.2f", oldData.Kp, oldData.Ki, oldData.Kd);
+  M5.Lcd.setCursor(30, 110);
+  M5.Lcd.printf("%.2f    %.2f    %.2f", dataToSend.Kp, dataToSend.Ki, dataToSend.Kd);
+  M5.Lcd.setCursor(30, 130);
+  M5.Lcd.printf("+-%.1f    +-%.1f   +-%.1f", increaseKp, increaseKi, increaseKd);
+
+  // ボタン表示
+  M5.Lcd.setCursor(btnBPos - 20, btnHeight);
+  M5.Lcd.printf("Mode");
+
+  M5.Lcd.setCursor(btnAPos - 30, btnHeight);
+  M5.Lcd.printf(aBtn[mode].c_str());
+
+  M5.Lcd.setCursor(btnCPos - 30, btnHeight);
+  M5.Lcd.printf(cBtn[mode].c_str());
 }
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -71,6 +104,7 @@ void setup() {
   auto cfg = M5.config();
   cfg.clear_display = true;
   M5.begin(cfg);
+  setupLcd();
 
   Serial.begin(115200);
 
@@ -79,7 +113,7 @@ void setup() {
   if (esp_now_init() != ESP_OK) {
     Serial.println("Failed to initialize ESP-NOW");
     lcdData.deviceStatus = "Failed to initialize ESP-NOW";
-    printfLcd();
+    errLcd();
     return;
   }
 
@@ -90,7 +124,7 @@ void setup() {
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println("Failed to add peer");
     lcdData.deviceStatus = "Failed to add peer";
-    printfLcd();
+    errLcd();
     return;
   }
 
@@ -106,15 +140,18 @@ void loop() {
   if (M5.BtnA.wasPressed()) {
     switch (mode){
       case 0:
-        dataToSend.Kp -= 1;
+        dataToSend.Kp -= increaseKp;
+        dataToSend.Kp = constrain(dataToSend.Kp, 0.0, 10000.0);
         break;
 
       case 1:
-        dataToSend.Ki -= 0.1;
+        dataToSend.Ki -= increaseKi;
+        dataToSend.Ki = constrain(dataToSend.Ki, 0.0, 10000.0);
         break;
 
       case 2:
-        dataToSend.Kd -= 0.1;
+        dataToSend.Kd -= increaseKd;
+        dataToSend.Kd = constrain(dataToSend.Kd, 0.0, 10000.0);
         break;
 
       default:
@@ -124,23 +161,24 @@ void loop() {
   }
   if (M5.BtnB.wasPressed()) {
     mode = (mode + 1) % 4;
-    if (mode == 3){
-      sendData();
-    }
     printfLcd();
   }
   if (M5.BtnC.wasPressed()) {
     switch (mode){
       case 0:
-        dataToSend.Kp += 1;
+        dataToSend.Kp += increaseKp;
         break;
 
       case 1:
-        dataToSend.Ki += 0.1;
+        dataToSend.Ki += increaseKi;
         break;
 
       case 2:
-        dataToSend.Kd += 0.1;
+        dataToSend.Kd += increaseKd;
+        break;
+      
+      case 3:
+        sendData();
         break;
 
       default:
