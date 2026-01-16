@@ -1,0 +1,73 @@
+typedef struct {
+  int minPwm = 45;
+  int antiWindup = 150;
+  float targetAngle = -2.5;
+  float Kp = 27.0;
+  float Ki = 200.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+安定はしないが立っている時間は長い
+
+typedef struct {
+  int minPwm = 45;
+  int antiWindup = 200;
+  float targetAngle = -2.5;
+  float Kp = 27.0;
+  float Ki = 240.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+安定しており、移動はするが倒れづらい
+
+typedef struct {
+  int minPwm = 50;
+  int antiWindup = 200;
+  float targetAngle = -2.5;
+  float Kp = 25.0;
+  float Ki = 240.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+しばらくは立つが徐々に傾いて最終的に倒れる
+
+typedef struct {
+  int minPwm = 0;
+  int antiWindup = 200;
+  float targetAngle = -2.5;
+  float Kp = 30.0;
+  float Ki = 240.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+安定してるが、揺れると弱い
+
+typedef struct {
+  int minPwm = 0;
+  int antiWindup = 200;
+  float targetAngle = -2.5;
+  float Kp = 30.0;
+  float Ki = 240.0;
+  float Kd = 1.5;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+ほぼ自立可能、kd次第
+kdが2あたりで細かく振動しはじめる
+1.5~1.9
+
+typedef struct {
+  int minPwm = 0;
+  int antiWindup =200;
+  float targetAngle = -2.5;
+  float Kp = 30.0;
+  float Ki = 600.0;
+  float Kd = 1.5;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
+} cData;
+完全に自立しあまり動かない

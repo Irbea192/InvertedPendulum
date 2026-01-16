@@ -61,12 +61,12 @@ Motor motorA(AIN1, AIN2, PWMA, offsetA, STBY); // AIN1, AIN2, PWMA
 Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 
 typedef struct {
-  int minPwm = 45;
-  int antiWindup = 150;
+  int minPwm = 0;
+  int antiWindup =200;
   float targetAngle = -2.5;
-  float Kp = 27.0;
-  float Ki = 200.0;
-  float Kd = 0.42;
+  float Kp = 30.0;
+  float Ki = 600.0;
+  float Kd = 1.5;
   float motorGainA = 0.97;
   float motorGainB = 1.0;
 } cData;
