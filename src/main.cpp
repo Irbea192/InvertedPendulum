@@ -23,7 +23,7 @@ https://qiita.com/coppercele/items/e4d71537a386966338d0
 #endif
 
 #define BMI160_ADDRESS 0x69
-#define PWM_MIN 45 // 最小PWM値
+// #define PWM_MIN 45 // 最小PWM値
 #define PWM_MAX 255 // 最大PWM値
 
 String mymacAddress = "B8:F8:62:F9:C4:D4";
@@ -33,7 +33,7 @@ Madgwick filter;
 float roll = 0;
 float prevRoll = 0;
 
-float targetAngle = -2.5; // 目標角度（直立）
+// float targetAngle = -2.5; // 目標角度（直立）
 float dt, preTime;
 float P, I, D, U, preP;
 float power = 0.0;
@@ -61,9 +61,14 @@ Motor motorA(AIN1, AIN2, PWMA, offsetA, STBY); // AIN1, AIN2, PWMA
 Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 
 typedef struct {
-  float Kp = 18.0;
-  float Ki = 450.0;
-  float Kd = 0.1;
+  int minPwm = 45;
+  int antiWindup = 150;
+  float targetAngle = -2.5;
+  float Kp = 27.0;
+  float Ki = 200.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
 } cData;
 
 cData recvData;
@@ -111,14 +116,14 @@ void setup() {
       esp_now_register_recv_cb(OnDataRecv);
     #endif
 
-    lasttime = millis();
+    lasttime = micros();
 
     Serial.println("Setup done!");
 }
 
 void loop() {
   // 10msec周期で処理
-  unsigned long now = micros();
+  uint64_t now = micros();
   if((now - lasttime) < 10000) return;
   lasttime = now;
 
@@ -151,23 +156,19 @@ void loop() {
   preTime = micros(); // 現在時間を保存
 
   // PID制御
-  P = roll - targetAngle; // 現在の角度と目標角度から偏差を求める
+  P = roll - setData.targetAngle; // 現在の角度と目標角度から偏差を求める
   I += P * dt; // 偏差の積分
   D = (P - preP) / dt; // 偏差の微分
+  preP = P; // 偏差を保存
 
   // アンチワインドアップ
   // I制御に値が溜まって、積分の飽和が発生し応答が悪くなるので、大きくなりすぎたらリセットする
-  if (100 < abs(I * setData.Ki)) I = 0;
+  if (setData.antiWindup < abs(I * setData.Ki)) I = 0;
 
   power = setData.Kp * P + setData.Ki * I + setData.Kd * D; // 制御量を計算
-  pwm = (int)(constrain(abs(power), PWM_MIN, PWM_MAX)); // PWM値に変換
+  pwm = (int)(constrain(abs(power), setData.minPwm, PWM_MAX)); // PWM値に変換
 
-  if (targetAngle - 1 < roll && roll < targetAngle + 1) {
-    brake(motorA, motorB);
-    P = 0;
-
-    D = 0;
-  } else if (roll < -stoptheta + targetAngle || roll > stoptheta + targetAngle) {
+  if (roll < -stoptheta + setData.targetAngle || roll > stoptheta + setData.targetAngle) {
     brake(motorA, motorB);
     P = 0;
     I = 0;
@@ -179,9 +180,13 @@ void loop() {
 
   } else {
     if (power < 0) {
-      forward(motorA, motorB, pwm);
+      motorA.drive((int)(pwm * setData.motorGainA));
+      motorB.drive((int)(pwm * setData.motorGainB));
+      // forward(motorA, motorB, pwm);
     } else if (power > 0) {
-      back(motorA, motorB, pwm);
+      motorA.drive(-(int)(pwm * setData.motorGainA));
+      motorB.drive(-(int)(pwm * setData.motorGainB));
+      // back(motorA, motorB, pwm);
     }
   }
 }

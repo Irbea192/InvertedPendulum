@@ -15,25 +15,45 @@ typedef struct {
 LcdData lcdData;
 
 typedef struct {
-  float Kp = 40.0;
-  float Ki = 0.0;
-  float Kd = 0.0;
+  int minPwm = 45;
+  int antiWindup = 150;
+  float targetAngle = -2.5;
+  float Kp = 27.0;
+  float Ki = 200.0;
+  float Kd = 0.42;
+  float motorGainA = 0.97;
+  float motorGainB = 1.0;
 } cData;
 
 cData dataToSend;
 cData oldData;
 
+int incPwm = 1;
+int incAntiWindup = 10;
+float incTargetAngle = 0.1;
+float increaseMotorGainA = 0.01;
+float increaseMotorGainB = 0.01;
 float increaseKp = 1.0;
 float increaseKi = 5.0;
-float increaseKd = 0.1;
+float increaseKd = 0.01;
 
 uint8_t targetAddress[] = {0xB8, 0xF8, 0x62, 0xF9, 0xC4, 0xD4};
 esp_now_peer_info_t peerInfo;
 
+int const maxMode = 9;
+#define PWM_MODE 0
+#define ANGLE_MODE 1
+#define ANTI_WINDUP_MODE 2
+#define MOTOR_GAIN_MODE_A 3
+#define MOTOR_GAIN_MODE_B 4
+#define KP_MODE 5
+#define KI_MODE 6
+#define KD_MODE 7
+#define SEND_MODE 8
 int mode = 0;
-String modeNames[4] = {"Kp", "Ki", "Kd", "Send"};
-String aBtn[4] = {"-Kp", "-Ki", "-Kd", ""};
-String cBtn[4] = {"+Kp", "+Ki", "+Kd", "Send"};
+String modeNames[maxMode] = {"PWM", "Ang", "AWU", "MGA", "MGB", "Kp", "Ki", "Kd", "Send"};
+String aBtn[maxMode] = {"-PWM", "-Ang", "-AWU", "-MGA", "+MGB", "-Kp", "-Ki", "-Kd", ""};
+String cBtn[maxMode] = {"+PWM", "+Ang", "+AWU", "-MGA", "+MGB", "+Kp", "+Ki", "+Kd", "Send"};
 
 int btnHeight = 220; // ボタン表示のY座標
 int btnAPos = 60; // ボタンAの中心位置
@@ -56,20 +76,29 @@ void errLcd() {
 void printfLcd() {
   M5.Lcd.clear();
   M5.Lcd.setCursor(10, 10);
-  M5.Lcd.printf("Function Status: %s", lcdData.functionStatus.c_str());
+  M5.Lcd.printf("F Status: %s", lcdData.functionStatus.c_str());
   M5.Lcd.setCursor(10, 30);
-  M5.Lcd.printf("Send Status: %s", lcdData.sendStatus.c_str());
+  M5.Lcd.printf("S Status: %s", lcdData.sendStatus.c_str());
   M5.Lcd.setCursor(10, 50);
   M5.Lcd.printf("Mode: %s", modeNames[mode].c_str());
+
+  M5.Lcd.setCursor(10, 70);
+  M5.Lcd.printf("PWM:%d TA:%.1f AWU:%d", oldData.minPwm, oldData.targetAngle, oldData.antiWindup);
+  M5.Lcd.setCursor(10, 90);
+  M5.Lcd.printf("PWM:%d TA:%.1f AWU:%d", dataToSend.minPwm, dataToSend.targetAngle, dataToSend.antiWindup);
+  M5.Lcd.setCursor(10, 110);
+  M5.Lcd.printf("MGA:%.2f MGB:%.2f", oldData.motorGainA, oldData.motorGainB);
+  M5.Lcd.setCursor(10, 130);
+  M5.Lcd.printf("MGA:%.2f MGB:%.2f", dataToSend.motorGainA, dataToSend.motorGainB);
   
-  M5.Lcd.setCursor(30, 70);
-  M5.Lcd.printf(" Kp      Ki      Kd");
-  M5.Lcd.setCursor(30, 90);
-  M5.Lcd.printf("%.2f    %.2f    %.2f", oldData.Kp, oldData.Ki, oldData.Kd);
-  M5.Lcd.setCursor(30, 110);
-  M5.Lcd.printf("%.2f    %.2f    %.2f", dataToSend.Kp, dataToSend.Ki, dataToSend.Kd);
-  M5.Lcd.setCursor(30, 130);
-  M5.Lcd.printf("+-%.1f    +-%.1f   +-%.1f", increaseKp, increaseKi, increaseKd);
+  M5.Lcd.setCursor(30, 150);
+  M5.Lcd.printf(" Kp   Ki   Kd");
+  M5.Lcd.setCursor(30, 170);
+  M5.Lcd.printf(" %.2f  %.2f  %.2f", oldData.Kp, oldData.Ki, oldData.Kd);
+  M5.Lcd.setCursor(30, 190);
+  M5.Lcd.printf(" %.2f  %.2f  %.2f", dataToSend.Kp, dataToSend.Ki, dataToSend.Kd);
+  M5.Lcd.setCursor(30, 210);
+  M5.Lcd.printf("+-%.1f  +-%.1f  +-%.1f", increaseKp, increaseKi, increaseKd);
 
   // ボタン表示
   M5.Lcd.setCursor(btnBPos - 20, btnHeight);
@@ -139,17 +168,42 @@ void loop() {
   M5.update();
   if (M5.BtnA.wasPressed()) {
     switch (mode){
-      case 0:
+      case PWM_MODE:
+        dataToSend.minPwm -= incPwm;
+        dataToSend.minPwm = constrain(dataToSend.minPwm, 0, 255);
+        break;
+
+      case ANGLE_MODE:
+        dataToSend.targetAngle -= incTargetAngle;
+        dataToSend.targetAngle = constrain(dataToSend.targetAngle, -90.0, 90.0);
+        break;
+
+      case ANTI_WINDUP_MODE:
+        dataToSend.antiWindup -= incAntiWindup;
+        dataToSend.antiWindup = constrain(dataToSend.antiWindup, 0, 10000);
+        break;
+      
+      case MOTOR_GAIN_MODE_A:
+        dataToSend.motorGainA -= increaseMotorGainA;
+        dataToSend.motorGainA = constrain(dataToSend.motorGainA, 0.0, 1.0);
+        break;
+      
+      case MOTOR_GAIN_MODE_B:
+        dataToSend.motorGainB -= increaseMotorGainB;
+        dataToSend.motorGainB = constrain(dataToSend.motorGainB, 0.0, 1.0);
+        break; 
+
+      case KP_MODE:
         dataToSend.Kp -= increaseKp;
         dataToSend.Kp = constrain(dataToSend.Kp, 0.0, 10000.0);
         break;
 
-      case 1:
+      case KI_MODE:
         dataToSend.Ki -= increaseKi;
         dataToSend.Ki = constrain(dataToSend.Ki, 0.0, 10000.0);
         break;
 
-      case 2:
+      case KD_MODE:
         dataToSend.Kd -= increaseKd;
         dataToSend.Kd = constrain(dataToSend.Kd, 0.0, 10000.0);
         break;
@@ -160,24 +214,49 @@ void loop() {
     printfLcd();
   }
   if (M5.BtnB.wasPressed()) {
-    mode = (mode + 1) % 4;
+    mode = (mode + 1) % maxMode;
     printfLcd();
   }
   if (M5.BtnC.wasPressed()) {
     switch (mode){
-      case 0:
+      case PWM_MODE:
+        dataToSend.minPwm += incPwm;
+        dataToSend.minPwm = constrain(dataToSend.minPwm, 0, 255);
+        break;
+
+      case ANGLE_MODE:
+        dataToSend.targetAngle += incTargetAngle;
+        dataToSend.targetAngle = constrain(dataToSend.targetAngle, -90.0, 90.0);
+        break;
+      
+      case ANTI_WINDUP_MODE:
+        dataToSend.antiWindup += 10;
+        dataToSend.antiWindup = constrain(dataToSend.antiWindup, 0, 10000);
+        break;
+
+      case MOTOR_GAIN_MODE_A:
+        dataToSend.motorGainA += increaseMotorGainA;
+        dataToSend.motorGainA = constrain(dataToSend.motorGainA, 0.0, 1.0);
+        break;
+
+      case MOTOR_GAIN_MODE_B:
+        dataToSend.motorGainB += increaseMotorGainB;
+        dataToSend.motorGainB = constrain(dataToSend.motorGainB, 0.0, 1.0);
+        break;
+
+      case KP_MODE:
         dataToSend.Kp += increaseKp;
         break;
 
-      case 1:
+      case KI_MODE:
         dataToSend.Ki += increaseKi;
         break;
 
-      case 2:
+      case KD_MODE:
         dataToSend.Kd += increaseKd;
         break;
       
-      case 3:
+      case SEND_MODE:
         sendData();
         break;
 
