@@ -63,7 +63,7 @@ Motor motorB(BIN1, BIN2, PWMB, offsetB, STBY); // BIN1, BIN2, PWMB
 typedef struct {
   int minPwm = 0;
   int antiWindup =200;
-  float targetAngle = -2.5;
+  float targetAngle = -3.9;
   float Kp = 30.0;
   float Ki = 600.0;
   float Kd = 1.5;
